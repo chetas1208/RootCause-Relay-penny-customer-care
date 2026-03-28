@@ -1,6 +1,9 @@
 import pytest
+import httpx
 
-from app.schemas.models import ApprovalStatus, UserRole
+from app.core.config import get_settings
+from app.schemas.models import ApprovalStatus, CallSession, CallType
+from app.services.bland_service import BlandService
 from app.services.call_service import CallService
 from app.services.seed import seed_data
 from app.storage.memory_store import MemoryStore
@@ -87,3 +90,58 @@ async def test_webhook_updates_call_status():
     assert updated is not None
     assert updated.status.value == "completed"
     assert updated.summary == "Call completed successfully"
+
+
+@pytest.mark.asyncio
+async def test_bland_omits_live_tooling_without_public_callback_url(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "bland_api_key", "test-key")
+    monkeypatch.setattr(settings, "app_public_url", "http://localhost:8000")
+
+    service = BlandService()
+    call = CallSession(
+        user_id="user-maya",
+        household_id="house-001",
+        call_type=CallType.SUPPORT,
+        phone_number="+14154819927",
+    )
+
+    payload = service.build_support_payload(call)
+
+    assert "tools" not in payload
+    assert "dynamic_data" not in payload
+    assert "webhook" not in payload
+    assert payload["metadata"]["callback_mode"] == "static"
+
+
+@pytest.mark.asyncio
+async def test_bland_uses_curl_fallback_for_tls_errors(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "bland_api_key", "test-key")
+    monkeypatch.setattr(settings, "app_public_url", "https://demo.example.com")
+
+    async def fake_post_call(self, payload):
+        raise httpx.ConnectError(
+            "[SSL: TLSV1_ALERT_PROTOCOL_VERSION] tlsv1 alert protocol version",
+            request=httpx.Request("POST", "https://api.bland.ai/v1/calls"),
+        )
+
+    def fake_curl_fallback(self, payload):
+        return {"status": "success", "call_id": "curl-call-123"}
+
+    monkeypatch.setattr(BlandService, "_post_call", fake_post_call)
+    monkeypatch.setattr(BlandService, "_queue_call_with_curl", fake_curl_fallback)
+
+    service = BlandService()
+    call = CallSession(
+        user_id="user-maya",
+        household_id="house-001",
+        call_type=CallType.SUPPORT,
+        phone_number="+14154819927",
+    )
+
+    response = await service.queue_call(call)
+
+    assert response["call_id"] == "curl-call-123"
+    assert response["transport"] == "curl"
+    assert response["payload"]["phone_number"] == "+14154819927"

@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -52,6 +53,16 @@ class Settings(BaseSettings):
     @property
     def ghost_enabled(self) -> bool:
         return bool(self.ghost_database_url)
+
+    @property
+    def app_public_url_is_public(self) -> bool:
+        parsed = urlparse(self.app_public_url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not host:
+            return False
+        if host in {"localhost", "127.0.0.1", "0.0.0.0"} or host.endswith(".local"):
+            return False
+        return True
 
 @lru_cache()
 def get_settings() -> Settings:

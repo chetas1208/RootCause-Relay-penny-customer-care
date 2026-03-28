@@ -41,6 +41,7 @@ class CallService:
             call_type=CallType.SUPPORT,
             phone_number=target_phone,
         )
+        call.metadata = await self._build_call_context(subject_user_id=user.id)
         await self.store.save_call_session(call)
         await self.store.save_call_event(CallEvent(call_session_id=call.id, event_type="support_call_requested"))
         await self._trace(call.id, "support_call_requested", {"phone_number": target_phone})
@@ -49,6 +50,7 @@ class CallService:
             provider_response = await self.bland.queue_call(call)
             call.vendor_call_id = provider_response.get("call_id")
             call.metadata = {
+                **call.metadata,
                 "provider": "bland",
                 "provider_response": provider_response,
             }
@@ -109,6 +111,7 @@ class CallService:
             recommendation_set_id=approval.recommendation_set_id,
             approval_request_id=approval.id,
         )
+        call.metadata = await self._build_call_context(subject_user_id=approval.child_user_id, approval=approval)
         await self.store.save_call_session(call)
         await self.store.save_call_event(
             CallEvent(
@@ -123,6 +126,7 @@ class CallService:
             provider_response = await self.bland.queue_call(call)
             call.vendor_call_id = provider_response.get("call_id")
             call.metadata = {
+                **call.metadata,
                 "provider": "bland",
                 "provider_response": provider_response,
             }
@@ -362,6 +366,45 @@ class CallService:
         if user.id == call.user_id:
             return
         raise HTTPException(status_code=403, detail="You do not have access to this call")
+
+    async def _build_call_context(
+        self,
+        subject_user_id: str,
+        approval: ApprovalRequest | None = None,
+    ) -> dict[str, Any]:
+        child_user = await self.store.get_user(subject_user_id)
+        profile = await self.store.get_profile(subject_user_id)
+        recommendation = await self.store.get_recommendation_set(subject_user_id)
+        if not approval and recommendation:
+            approval = await self.store.get_approval_for_recommendation(recommendation.id)
+        options = await self.store.list_recommendation_options(recommendation.id) if recommendation else []
+
+        parent_name = ""
+        if approval:
+            parent_user = await self.store.get_user(approval.parent_user_id)
+            parent_name = parent_user.name if parent_user else ""
+
+        return {
+            "customer_context": {
+                "child_name": child_user.name if child_user else "the customer",
+                "parent_name": parent_name,
+                "balance_amount": f"${(profile.balance_cents / 100):.2f}" if profile else "$0.00",
+                "coin_balance": profile.coin_balance if profile else 0,
+                "favorite_topics": list(profile.favorite_topics) if profile else [],
+                "recommendation_summary": recommendation.summary if recommendation else "No recommendation is ready yet.",
+                "approval_status": approval.status.value if approval else "not_requested",
+                "options": [
+                    {
+                        "name": option.name,
+                        "symbol": option.symbol,
+                        "allocation_percent": option.allocation_percent,
+                        "risk_level": option.risk_level,
+                        "rationale": option.rationale,
+                    }
+                    for option in options
+                ],
+            }
+        }
 
     async def _trace(self, call_session_id: str, operation: str, metadata: dict[str, Any], status: str = "ok") -> None:
         started_at = now()

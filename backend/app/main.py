@@ -17,10 +17,20 @@ log = get_logger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("startup", env=settings.app_env, ghost_enabled=settings.ghost_enabled)
-    await store.initialize()
-    if settings.is_dev:
-        await seed_data(store)
-        log.info("seed_data_loaded")
+    try:
+        await store.initialize()
+        if settings.is_dev:
+            await seed_data(store)
+            log.info("seed_data_loaded", storage=store.backend.__class__.__name__)
+    except Exception as exc:
+        if settings.ghost_enabled and not store.is_memory:
+            log.warning("ghost_startup_failed_falling_back_to_memory", error=str(exc))
+            await store.use_memory_fallback(str(exc))
+            if settings.is_dev:
+                await seed_data(store)
+                log.info("seed_data_loaded", storage=store.backend.__class__.__name__)
+        else:
+            raise
     yield
     await store.close()
     log.info("shutdown")
