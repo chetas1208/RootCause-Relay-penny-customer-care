@@ -1,202 +1,316 @@
-# RootCause Relay
+# Penny Customer Care
 
-**Empathetic support-to-engineering deep agent** — not a chatbot wrapper.
+Penny Customer Care is a voice-first financial literacy support app for kids and families. A child earns coins through chores, reaches a learning threshold, sees personalized investment recommendations, and can call Penny for help. Parents stay in control through approval workflows, and admins can monitor calls, transcripts, traces, and approval outcomes.
 
-A frustrated user reports a product issue. The system understands their emotional state, diagnoses the technical root cause, creates an engineering artifact with evidence, and returns a grounded, empathetic user-facing update. All autonomously.
+This repository started from an earlier support-automation prototype and now centers on the Penny experience: role-aware login, child and parent dashboards, outbound Bland calls, Ghost-backed support data, and a live-answer path that can combine stored context with an LLM.
+
+## What The App Does
+
+- lets a child sign in and view balances, chores, and recommendation cards
+- lets a parent review pending approvals and call outcomes
+- lets an admin watch support calls, approval calls, and traces
+- places outbound support calls through Bland
+- places outbound parent approval calls through Bland
+- stores support context in Ghost when available, with an in-memory fallback for local demo use
+- supports Auth0 as the main auth path while preserving demo login for hackathon setups
+
+## Product Flow
+
+```text
+child does chores
+      |
+      v
+coins and balance go up
+      |
+      v
+threshold is reached
+      |
+      v
+Penny shows 3 recommendations
+      |
+      v
+child asks for help / starts call
+      |
+      v
++-----------------------------+
+|   Penny support call        |
+|   Bland outbound calling    |
++-----------------------------+
+      |
+      v
+question answered from:
+  - profile data
+  - recommendation data
+  - knowledge articles
+  - live LLM path
+      |
+      v
+parent approval flow if needed
+      |
+      +------------------\
+      |                   \
+      v                    v
+approved               declined
+      |                    |
+      v                    v
+status updated        learning moment logged
+```
+
+## Architecture
+
+```text
+  +---------------------+        HTTP        +----------------------+
+  | Next.js Frontend    | -----------------> | FastAPI Backend      |
+  | child / parent /    | <----------------- | auth / dashboard /   |
+  | admin dashboards    |                    | calls / webhooks     |
+  +----------+----------+                    +----------+-----------+
+             |                                            |
+             |                                            |
+             v                                            v
+     +-------+--------+                           +-------+--------+
+     | Auth0 or demo  |                           | Ghost or memory |
+     | role-aware auth|                           | app data store  |
+     +----------------+                           +-----------------+
+                                                          |
+                                                          |
+                                                          v
+                                              +-----------+-----------+
+                                              | Bland voice platform  |
+                                              | support + approval    |
+                                              +-----------+-----------+
+                                                          |
+                                                          v
+                                              +-----------+-----------+
+                                              | NIM / LLM answer path |
+                                              | grounded support      |
+                                              +-----------------------+
+```
+
+## Main Screens
+
+- `/login`
+  Demo login plus Auth0-aware sign-in handling.
+- `/dashboard`
+  Child view with balance, ledger, recommendations, and support call trigger.
+- `/parent`
+  Parent view with pending approvals and approval call state.
+- `/admin`
+  Ops view with totals, recent calls, traces, and approval visibility.
+- `/calls`
+  Call session list and detail views.
+
+Legacy routes like `/issues` and `/engineer` are still present for compatibility, but the active product experience is Penny customer care.
+
+## Stack
+
+### Frontend
+
+- Next.js 16
+- React 19
+- TypeScript
+- Tailwind CSS
+- React Query
+- Zustand
+- Auth0 React SDK
+
+### Backend
+
+- FastAPI
+- Pydantic
+- `httpx`
+- `python-jose`
+- `psycopg`
+- `structlog`
+- `pytest`
+
+### Integrations
+
+- Auth0 for parent/child/admin identity
+- Bland for support and approval calls
+- Ghost/Postgres for runtime support data
+- NVIDIA NIM for live-answer model access
+
+## Repository Layout
+
+```text
+.
+|-- backend/
+|   |-- app/
+|   |   |-- api/
+|   |   |-- core/
+|   |   |-- schemas/
+|   |   |-- services/
+|   |   |-- storage/
+|   |   \-- tracing/
+|   |-- tests/
+|   |-- requirements.txt
+|   \-- .env.example
+|-- frontend/
+|   |-- src/
+|   |   |-- app/
+|   |   |-- components/
+|   |   |-- lib/
+|   |   \-- store/
+|   |-- package.json
+|   \-- .env.example
+|-- docs/
+|-- shared/
+\-- README.md
+```
 
 ## Quick Start
 
 ### Prerequisites
+
 - Python 3.9+
 - Node.js 18+
 - npm
 
-### 1. Backend
+### 1. Start the backend
 
 ```bash
 cd backend
 python3 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env      # Edit if needed (works as-is for demo)
+cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 2. Frontend
+Backend URLs:
+
+- API: `http://localhost:8000`
+- Docs: `http://localhost:8000/docs`
+
+### 2. Start the frontend
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local  # Edit if needed
+cp .env.example .env.local
 npm run dev
 ```
 
-### 3. Open
+Frontend URL:
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+- App: `http://localhost:3000`
 
 ## Demo Accounts
 
-| Email | Name | Role | Default View |
-|-------|------|------|-------------|
-| alice@demo.com | Alice Chen | Customer | Issue intake + tracking |
-| bob@demo.com | Bob Martinez | Customer | Issue intake + tracking |
-| support@demo.com | Sam Support | Support | Dashboard with filters |
-| engineer@demo.com | Eva Engineer | Engineer | Technical investigation |
-| admin@demo.com | Ada Admin | Admin | Observability + traces |
+The seeded demo flow uses these accounts:
 
-## Architecture
+- `maya@demo.com`
+  Child experience
+- `nina@demo.com`
+  Parent experience
+- `ops@demo.com`
+  Admin / operations experience
 
-```
-┌─────────────┐     ┌─────────────────┐     ┌──────────────────┐
-│   Frontend   │────▶│   FastAPI API    │────▶│  Agent Engine    │
-│  Next.js 14  │◀────│  REST + SSE     │◀────│  Orchestrator    │
-│  TypeScript  │     │  Pydantic       │     │  Tool Adapters   │
-│  Tailwind    │     │  Typed schemas  │     │  Trace/Verify    │
-└─────────────┘     └─────────────────┘     └──────────────────┘
-                           │                        │
-                    ┌──────┴──────┐          ┌──────┴──────┐
-                    │  Storage    │          │  Adapters   │
-                    │  In-Memory  │          │  (Mocked)   │
-                    │  (Aero-     │          │  LLM, Auth  │
-                    │   spike     │          │  Code, Spec │
-                    │   ready)    │          │  KB, Voice  │
-                    └─────────────┘          └─────────────┘
-```
+## Important API Routes
 
-## What Makes This a Deep Agent
+### Auth and profile
 
-1. **Task Decomposition** — Breaks complaints into emotional state, severity, product area, missing info
-2. **Tool Routing** — Routes to different adapters: auth, knowledge base, code insight, spec gen
-3. **Multi-Step Execution** — 12+ sequential steps with retry logic and state persistence
-4. **Memory/State** — Every step output is stored, traceable, and queryable
-5. **Verification** — Checks all steps completed before marking resolved; escalates on low confidence
-6. **Graceful Fallback** — Retries failed steps (2x), escalates if confidence < 50%
-7. **Operational Empathy** — Generates user updates that acknowledge frustration, explain next steps, and never over-promise
+- `POST /api/auth/demo-login`
+- `GET /api/auth/status`
+- `GET /api/auth/me`
+- `GET /api/profile/me`
+- `PATCH /api/profile/phone`
 
-## Sponsor Integration Mapping
+### Dashboard and recommendations
 
-| Sponsor | Integration Point | Current Implementation |
-|---------|------------------|----------------------|
-| **Anthropic / AWS** | LLM Planner — complaint analysis, plan generation, empathetic responses | Mock with realistic NLP heuristics |
-| **Okta** | Auth — demo login, token validation, role-based access | Mock with demo accounts |
-| **Bland** | Voice — transcript webhook, call processing | Mock with transcript cleaning |
-| **Macroscope** | Code Insight — code area analysis, recent changes, failure modes | Mock with realistic code knowledge base |
-| **Kiro** | Spec Generation — engineering specs, fix plans, task breakdown | Mock with template-based generation |
-| **Airbyte** | Ticketing/Actions — ticket creation, external connectors | Mock with ticket ID generation |
-| **Aerospike** | Storage — issue state, agent memory, workflow persistence | In-memory store (same interface) |
-| **TrueFoundry** | Observability — trace spans, metrics, execution graphs | Mock with structured logging |
-| **Overmind** | Optimization — prompt/policy tuning hooks | Interface defined, mock adapter |
+- `GET /api/dashboard`
+- `GET /api/recommendations/current`
 
-Every adapter has a clean abstract interface (`backend/app/adapters/base.py`). Swap in real implementations by implementing the interface.
+### Calls
 
-## Seeded Demo Data
+- `POST /api/calls/support`
+- `POST /api/calls/approval`
+- `GET /api/calls`
+- `GET /api/calls/{call_id}`
 
-5 pre-loaded issues that demonstrate different scenarios:
+### Bland tool and webhook endpoints
 
-1. **Duplicate charge after checkout retry** — billing, high severity, resolved with full artifact
-2. **Promo code breaks checkout** — checkout, high severity, resolved with full artifact
-3. **Password reset email missing** — auth, high severity, mid-execution
-4. **File upload silently fails** — file-management, critical, analyzing phase
-5. **Billing page crashes on mobile** — UI, medium severity, intake (ready to run)
-
-## Project Structure
-
-```
-├── backend/
-│   ├── app/
-│   │   ├── adapters/       # Tool adapter interfaces + mock implementations
-│   │   ├── agent/          # Orchestrator — the deep agent engine
-│   │   ├── api/            # FastAPI route handlers
-│   │   ├── core/           # Config, logging
-│   │   ├── schemas/        # Pydantic data models + API models
-│   │   ├── services/       # Business logic, auth, seed data
-│   │   ├── storage/        # Storage abstraction + in-memory impl
-│   │   ├── tracing/        # Trace/observability utilities
-│   │   └── main.py         # FastAPI app entry
-│   ├── tests/              # pytest async tests
-│   ├── requirements.txt
-│   └── .env.example
-├── frontend/
-│   ├── src/
-│   │   ├── app/            # Next.js App Router pages
-│   │   │   ├── page.tsx          # Landing
-│   │   │   ├── login/            # Demo login
-│   │   │   ├── issues/           # Issue intake + detail
-│   │   │   ├── dashboard/        # Support dashboard
-│   │   │   ├── engineer/         # Engineer investigation
-│   │   │   ├── admin/            # Admin observability
-│   │   │   └── not-found.tsx     # 404
-│   │   ├── components/
-│   │   │   ├── layout/     # Navbar, Providers
-│   │   │   ├── issues/     # Composer, Timeline, Artifact, List
-│   │   │   ├── shared/     # Status/Severity/Emotion badges, Confidence meter, Skeletons
-│   │   │   └── ui/         # shadcn/ui components
-│   │   ├── lib/            # API client, utilities
-│   │   └── store/          # Zustand auth store
-│   ├── .env.example
-│   └── package.json
-├── docs/
-└── README.md
-```
-
-## API Endpoints
-
-### Auth
-- `POST /api/auth/demo-login` — Demo login with email
-- `GET /api/auth/me` — Get current user
-
-### Issues
-- `POST /api/issues/intake` — Submit new issue
-- `GET /api/issues` — List issues (filterable)
-- `GET /api/issues/{id}` — Issue detail with messages
-- `GET /api/issues/{id}/timeline` — Agent plan + steps
-- `POST /api/issues/{id}/run-agent` — Trigger agent workflow
-- `POST /api/issues/{id}/retry-step` — Retry a failed step
-- `POST /api/issues/{id}/escalate` — Manual escalation
-
-### Artifacts
-- `GET /api/issues/{id}/artifact` — Engineering artifact
-- `POST /api/issues/{id}/artifact/regenerate` — Re-run analysis
-
-### Voice/Webhooks
-- `POST /api/webhooks/bland/transcript` — Bland voice transcript
+- `POST /api/bland/tools/customer-context`
+- `POST /api/bland/tools/answer-question`
+- `POST /api/bland/tools/approval-decision`
+- `POST /api/webhooks/bland/call`
 
 ### Observability
-- `GET /api/traces` — All traces
-- `GET /api/traces/{id}` — Issue-specific traces
-- `GET /api/traces/{id}/graph` — Execution graph
-- `GET /api/health` — System health
 
-### Live Updates
-- `GET /api/issues/{id}/stream` — SSE endpoint
+- `GET /api/health`
+- `GET /api/traces`
 
 ## Environment Variables
 
-See `backend/.env.example` and `frontend/.env.example` for all variables. The app runs fully in demo mode without any real API keys.
+See:
 
-## Tests
+- [backend/.env.example](/Users/chetasparekh/Library/CloudStorage/OneDrive-SanFranciscoStateUniversity/Hackathons/27Mar%20AWS%20Hackathon/backend/.env.example)
+- [frontend/.env.example](/Users/chetasparekh/Library/CloudStorage/OneDrive-SanFranciscoStateUniversity/Hackathons/27Mar%20AWS%20Hackathon/frontend/.env.example)
+
+Important backend variables include:
+
+- `APP_PUBLIC_URL`
+- `GHOST_DATABASE_URL`
+- `AUTH0_DOMAIN`
+- `AUTH0_AUDIENCE`
+- `AUTH0_MANAGEMENT_API_AUDIENCE`
+- `BLAND_API_KEY`
+- `BLAND_SUPPORT_VOICE_ID`
+- `BLAND_APPROVAL_VOICE_ID`
+- `NIM_BASE_URL`
+- `NIM_API_KEY`
+- `NIM_MODEL`
+
+Important frontend variables include:
+
+- `NEXT_PUBLIC_API_URL`
+- `NEXT_PUBLIC_AUTH0_DOMAIN`
+- `NEXT_PUBLIC_AUTH0_CLIENT_ID`
+- `NEXT_PUBLIC_AUTH0_AUDIENCE`
+
+## Local Development Notes
+
+- If Ghost is unavailable or has the wrong schema, the backend falls back to memory storage during development.
+- If Auth0 is not fully configured, demo login can still drive the child, parent, and admin flows.
+- If the backend is only running on `localhost`, outbound Bland calls can still be queued in static mode, but live tool callbacks and webhook-driven grounded answers need a public HTTPS backend URL.
+
+## Testing
+
+Backend:
 
 ```bash
 cd backend
 source venv/bin/activate
-pytest tests/ -v
+pytest tests -q
 ```
 
-12 tests covering:
-- Health check
-- Auth flow (login, me, unauthorized)
-- Issue CRUD (list, detail, intake, 404)
-- Timeline and artifact retrieval
-- Full orchestration flow (intake → analysis → plan → execute → verify → artifact)
-- SSE callback capture
+Frontend:
 
-## Key Design Decisions
+```bash
+cd frontend
+npm run lint
+```
 
-- **Adapter pattern everywhere** — every external service is behind an interface, making sponsor API integration a matter of implementing one class
-- **Realistic mock data** — not lorem ipsum; actual plausible issue scenarios, code areas, team names, and failure modes
-- **Background task execution** — agent runs asynchronously, UI polls for updates
-- **Empathy is computed** — the system detects emotional state and adjusts language accordingly, never using generic platitudes
-- **Confidence-driven escalation** — if the agent isn't confident enough, it escalates rather than guessing
+## Current Status
+
+What is solid today:
+
+- seeded demo data
+- role-aware dashboards
+- support and approval call APIs
+- call detail views
+- Ghost or memory-backed storage
+- Auth0-ready backend and frontend integration points
+
+What still needs production hardening:
+
+- final public deployment for live Bland tool/webhook callbacks
+- stable production Ghost schema and migrations
+- secret rotation and deployment-safe env handling
+- full real-time grounded answer loop in a publicly reachable environment
+
+## Why This Project Matters
+
+Most finance products teach kids with charts after the fact. Penny tries to teach them in the moment, through conversation, encouragement, and real decisions with parents still in control.
+
+The goal is not just to show a number on a dashboard. The goal is to make the first investing conversation feel understandable, friendly, and memorable.
